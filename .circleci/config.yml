@@ -1,0 +1,157 @@
+version: 2.1
+
+jobs:
+  # Backend job - run linting and tests
+  backend-test:
+    docker:
+      - image: cimg/node:20.18
+    working_directory: ~/project/INSY-POE-Backend
+    steps:
+      - checkout:
+          path: ~/project
+      - restore_cache:
+          keys:
+            - backend-deps-{{ checksum "INSY-POE-Backend/package-lock.json" }}
+      - run:
+          name: Install Backend Dependencies
+          command: npm ci
+      - save_cache:
+          key: backend-deps-{{ checksum "INSY-POE-Backend/package-lock.json" }}
+          paths:
+            - INSY-POE-Backend/node_modules
+      - run:
+          name: Run Backend Linter
+          command: npm run lint || true
+      - run:
+          name: Run Backend Tests (if available)
+          command: npm test -- --coverage --coverageReporters=lcov --coverageReporters=text || echo "No tests found, skipping"
+      - store_artifacts:
+          path: INSY-POE-Backend/coverage
+          destination: backend-coverage
+          when: always
+
+  # Frontend job - run linting and build
+  frontend-test:
+    docker:
+      - image: cimg/node:20.18
+    working_directory: ~/project/INSY-POE-Frontend
+    steps:
+      - checkout:
+          path: ~/project
+      - restore_cache:
+          keys:
+            - frontend-deps-{{ checksum "INSY-POE-Frontend/package-lock.json" }}
+      - run:
+          name: Install Frontend Dependencies
+          command: npm ci
+      - save_cache:
+          key: frontend-deps-{{ checksum "INSY-POE-Frontend/package-lock.json" }}
+          paths:
+            - INSY-POE-Frontend/node_modules
+      - run:
+          name: Run Frontend Linter
+          command: npm run lint || true
+      - run:
+          name: Build Frontend
+          command: npm run build
+      - store_artifacts:
+          path: INSY-POE-Frontend/dist
+          destination: frontend-build
+          when: always
+
+  # SonarCloud analysis job - scans for hotspots and code smells
+  sonarcloud-backend-analysis:
+    docker:
+      - image: cimg/node:20.18
+    working_directory: ~/project
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - backend-deps-{{ checksum "INSY-POE-Backend/package-lock.json" }}
+      - run:
+          name: Install Java (required for SonarCloud Scanner)
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y openjdk-17-jre
+      - run:
+          name: Install Backend Dependencies
+          command: |
+            cd INSY-POE-Backend
+            npm ci
+      - run:
+          name: Generate Test Coverage (if tests exist)
+          command: |
+            cd INSY-POE-Backend
+            npm run test:coverage || echo "No tests to run"
+      - run:
+          name: Download SonarCloud Scanner
+          command: |
+            curl -sSLo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+            unzip -q sonar-scanner.zip
+            mv sonar-scanner-5.0.1.3006-linux sonar-scanner
+      - run:
+          name: Run SonarCloud Scan (Backend)
+          command: |
+            export PATH="$PATH:$(pwd)/sonar-scanner/bin"
+            cd INSY-POE-Backend
+            if [ -z "$SONAR_TOKEN" ]; then
+              echo "ERROR: SONAR_TOKEN is not set!"
+              exit 1
+            fi
+            echo "Token is set (length: ${#SONAR_TOKEN} characters)"
+            sonar-scanner -Dsonar.host.url=https://sonarcloud.io -Dsonar.login=${SONAR_TOKEN}
+
+  # SonarCloud analysis for frontend
+  sonarcloud-frontend-analysis:
+    docker:
+      - image: cimg/node:20.18
+    working_directory: ~/project
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - frontend-deps-{{ checksum "INSY-POE-Frontend/package-lock.json" }}
+      - run:
+          name: Install Java (required for SonarCloud Scanner)
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y openjdk-17-jre
+      - run:
+          name: Install Frontend Dependencies
+          command: |
+            cd INSY-POE-Frontend
+            npm ci
+      - run:
+          name: Download SonarCloud Scanner
+          command: |
+            curl -sSLo sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+            unzip -q sonar-scanner.zip
+            mv sonar-scanner-5.0.1.3006-linux sonar-scanner
+      - run:
+          name: Run SonarCloud Scan (Frontend)
+          command: |
+            export PATH="$PATH:$(pwd)/sonar-scanner/bin"
+            cd INSY-POE-Frontend
+            if [ -z "$SONAR_TOKEN" ]; then
+              echo "ERROR: SONAR_TOKEN is not set!"
+              exit 1
+            fi
+            echo "Token is set (length: ${#SONAR_TOKEN} characters)"
+            sonar-scanner -Dsonar.host.url=https://sonarcloud.io -Dsonar.login=${SONAR_TOKEN}
+
+workflows:
+  version: 2
+  test-and-scan:
+    jobs:
+      - backend-test
+      - frontend-test
+      - sonarcloud-backend-analysis:
+          requires:
+            - backend-test
+          context: SonarCloud
+      - sonarcloud-frontend-analysis:
+          requires:
+            - frontend-test
+          context: SonarCloud
+

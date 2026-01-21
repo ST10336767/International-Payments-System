@@ -1,0 +1,17 @@
+node_modules
+INSY-POE-Frontend/node_modules
+INSY-POE-Backend/node_modules
+
+*.env
+ssl
+build
+dist
+
+# Coverage reports
+coverage
+*.lcov
+.nyc_output
+
+# SonarCloud
+.sonar
+.scannerwork
